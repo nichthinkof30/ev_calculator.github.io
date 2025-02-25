@@ -26,22 +26,8 @@
       .card {
         margin-bottom: 20px;
       }
-      .segment-row {
-        border: 1px solid #ddd;
-        padding: 10px;
-        margin-bottom: 10px;
-        border-radius: 4px;
-        background-color: #fafafa;
-      }
-      .segment-header {
-        font-weight: bold;
-        margin-bottom: 10px;
-      }
       canvas {
         margin-top: 20px;
-      }
-      .error {
-        color: red;
       }
     </style>
   </head>
@@ -59,124 +45,124 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js" crossorigin="anonymous"></script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js"
+      crossorigin="anonymous"
+    ></script>
 
     <script type="text/babel">
       function ROICalculator() {
-        // Global parameters
+        // Basic parameters
         const [costPerCharger, setCostPerCharger] = React.useState(5000);
         const [infrastructureCost, setInfrastructureCost] = React.useState(2000);
-        const [chargerPowerRating, setChargerPowerRating] = React.useState(50); // in kW
-        const [averageChargingPower, setAverageChargingPower] = React.useState(80); // in %
-        const [electricityCost, setElectricityCost] = React.useState(0.5); // RM per kWh
-        const [hostingCost] = React.useState(80); // RM
-        const [maintenanceFee] = React.useState(350); // RM
-        const [profitSharing, setProfitSharing] = React.useState(20); // in %
-        const [projectionMonths, setProjectionMonths] = React.useState(12); // dynamic projection months
+        const [chargerPowerRating, setChargerPowerRating] = React.useState(50);
+        const [averageChargingPower, setAverageChargingPower] = React.useState(80);
+        const [utilizationRate, setUtilizationRate] = React.useState(30);
+        const [chargingFee, setChargingFee] = React.useState(1);
+        const [electricityCost, setElectricityCost] = React.useState(0.5);
+        const [profitSharing, setProfitSharing] = React.useState(20);
+        const [projectionMonths, setProjectionMonths] = React.useState(12);
 
-        // For daily segments, we initialize with one default segment covering 24 hours.
-        const [segments, setSegments] = React.useState([
-          { hours: 24, chargingFee: 1, utilizationRate: 30 }
-        ]);
+        // New parameters
+        const [hostingFee, setHostingFee] = React.useState(80);
+        const [maintenanceFee, setMaintenanceFee] = React.useState(350);
+        const [taxImposed, setTaxImposed] = React.useState(0);
+        const [governmentGrant, setGovernmentGrant] = React.useState(0);
 
-        // Hold validation error for segments
-        const [segmentError, setSegmentError] = React.useState("");
+        // Multi-section parameters (optional)
+        const [sections, setSections] = React.useState([]);
+        const [sectionsError, setSectionsError] = React.useState("");
 
-        // For storing calculated result
         const [result, setResult] = React.useState(null);
-        const daysInMonth = 30;
+        const hoursInMonth = 30 * 24; // 720 hours
 
-        // Validate that total hours from segments does not exceed 24.
-        const validateSegments = () => {
-          const totalHours = segments.reduce((sum, seg) => sum + Number(seg.hours || 0), 0);
-          if (totalHours > 24) {
-            setSegmentError("Total hours across segments cannot exceed 24.");
-            return false;
-          } else {
-            setSegmentError("");
-            return true;
-          }
+        // Functions to manage sections
+        const addSection = () => {
+          setSections([...sections, { hours: 0, fee: 0, utilization: 0 }]);
         };
 
-        // When segments change, revalidate.
+        const updateSection = (index, field, value) => {
+          const newSections = [...sections];
+          newSections[index][field] = parseFloat(value);
+          setSections(newSections);
+        };
+
+        const removeSection = (index) => {
+          const newSections = [...sections];
+          newSections.splice(index, 1);
+          setSections(newSections);
+        };
+
+        // Validate that the sum of hours across sections is ≤ 24
         React.useEffect(() => {
-          validateSegments();
-        }, [segments]);
+          const totalHours = sections.reduce((sum, sec) => sum + (sec.hours || 0), 0);
+          if (totalHours > 24) {
+            setSectionsError("Total hours in all sections must not exceed 24.");
+          } else {
+            setSectionsError("");
+          }
+        }, [sections]);
 
-        // Functions to handle segment changes
-        const updateSegment = (index, field, value) => {
-          const newSegments = [...segments];
-          newSegments[index][field] = value;
-          setSegments(newSegments);
-        };
-
-        const addSegment = () => {
-          // Default new segment with 0 hours.
-          setSegments([...segments, { hours: 0, chargingFee: 0, utilizationRate: 0 }]);
-        };
-
-        const removeSegment = (index) => {
-          const newSegments = segments.filter((_, i) => i !== index);
-          setSegments(newSegments);
-        };
-
-        // Calculate ROI based on segments.
+        // Calculation function
         const calculateROI = () => {
-          // If segments are invalid, do not calculate.
-          if (!validateSegments()) return null;
-          let totalEnergy = 0;
-          let totalRevenue = 0;
-          segments.forEach((seg) => {
-            const segHours = Number(seg.hours);
-            const segUtil = Number(seg.utilizationRate);
-            const segFee = Number(seg.chargingFee);
-            // Energy delivered for this segment over the month:
-            const segEnergy = chargerPowerRating * (averageChargingPower / 100) * (segUtil / 100) * (segHours * daysInMonth);
-            totalEnergy += segEnergy;
-            totalRevenue += segEnergy * segFee;
-          });
-          const monthlyElectricityCost = totalEnergy * electricityCost;
-          const monthlyExpenses = monthlyElectricityCost + hostingCost + maintenanceFee;
-          const monthlyGrossProfit = totalRevenue - monthlyExpenses;
-          const partnerPayment = monthlyGrossProfit * (profitSharing / 100);
-          const monthlyNetProfit = monthlyGrossProfit - partnerPayment;
-          const totalInvestment = costPerCharger + infrastructureCost;
-          const monthlyROI = (monthlyNetProfit / totalInvestment) * 100;
+          let monthlyRevenue, monthlyElectricityCost;
+          if (sections.length > 0) {
+            // Use multi-section calculation
+            let dailyRevenue = 0;
+            let dailyElectricity = 0;
+            sections.forEach(sec => {
+              dailyRevenue += chargerPowerRating * (sec.utilization / 100) * sec.fee * sec.hours;
+              dailyElectricity += chargerPowerRating * (sec.utilization / 100) * electricityCost * sec.hours;
+            });
+            monthlyRevenue = dailyRevenue * 30;
+            monthlyElectricityCost = dailyElectricity * 30;
+          } else {
+            // Use default calculation
+            const energyDelivered = chargerPowerRating * (averageChargingPower / 100) * ((utilizationRate / 100) * hoursInMonth);
+            monthlyRevenue = energyDelivered * chargingFee;
+            monthlyElectricityCost = energyDelivered * electricityCost;
+          }
+
+          const monthlyExpenses = monthlyElectricityCost + hostingFee + maintenanceFee;
+          const grossProfit = monthlyRevenue - monthlyExpenses;
+          const partnerPayment = grossProfit * (profitSharing / 100);
+          const netProfitBeforeTax = grossProfit - partnerPayment;
+          const monthlyNetProfit = netProfitBeforeTax * (1 - taxImposed / 100);
+
+          // Total investment reduced by government grant (not below 0)
+          let totalInvestment = costPerCharger + infrastructureCost - governmentGrant;
+          if (totalInvestment < 0) totalInvestment = 0;
+
+          const monthlyROI = totalInvestment > 0 ? (monthlyNetProfit / totalInvestment) * 100 : 0;
           const annualROI = monthlyROI * 12;
 
           return {
-            totalEnergy,
-            totalChargingRevenue: totalRevenue,
+            monthlyRevenue,
             monthlyElectricityCost,
             monthlyExpenses,
-            monthlyGrossProfit,
+            grossProfit,
             partnerPayment,
             monthlyNetProfit,
             monthlyROI,
             annualROI,
-            totalInvestment
+            totalInvestment,
           };
         };
 
-        // Handle form submission to calculate ROI
         const handleSubmit = (e) => {
           e.preventDefault();
+          if (sectionsError) return;
           const res = calculateROI();
-          if (res) {
-            setResult(res);
-          }
+          setResult(res);
         };
 
         // Compute Break Even Month:
-        // Month 1: net income = -(setup cost + monthly expense)
-        // Months 2+: net income = monthly net profit
+        // Month 1 net income = -(totalInvestment + monthlyExpenses), subsequent months = monthlyNetProfit
         const getBreakEvenMonth = () => {
           if (!result) return null;
           let cumulative = 0;
           for (let i = 1; i <= projectionMonths; i++) {
-            const monthlyIncome = i === 1
-              ? -(result.totalInvestment + result.monthlyExpenses)
-              : result.monthlyNetProfit;
+            const monthlyIncome = i === 1 ? -(result.totalInvestment + result.monthlyExpenses) : result.monthlyNetProfit;
             cumulative += monthlyIncome;
             if (cumulative >= 0) return i;
           }
@@ -184,33 +170,29 @@
         };
 
         // Chart.js integration:
-        // For cumulative net income: Month 1 uses -(setup cost + monthly expense), then add monthly net profit.
-        // For expenses: Month 1 shows (setup cost + monthly expense), subsequent months show monthly expense.
+        // - Cumulative Net Income: Month 1 = -(totalInvestment + monthlyExpenses), Months 2+ = monthlyNetProfit (cumulative)
+        // - Total Expenses: Month 1 = (totalInvestment + monthlyExpenses), Months 2+ = monthlyExpenses (non-cumulative)
         const chartRef = React.useRef(null);
         const chartInstanceRef = React.useRef(null);
+
         React.useEffect(() => {
           if (result) {
             let cumulativeNetIncome = [];
             let runningTotal = 0;
             for (let i = 1; i <= projectionMonths; i++) {
-              const monthlyIncome = i === 1
-                ? -(result.totalInvestment + result.monthlyExpenses)
-                : result.monthlyNetProfit;
+              const monthlyIncome = i === 1 ? -(result.totalInvestment + result.monthlyExpenses) : result.monthlyNetProfit;
               runningTotal += monthlyIncome;
               cumulativeNetIncome.push(runningTotal);
             }
             let expenseValues = [];
             for (let i = 1; i <= projectionMonths; i++) {
-              if (i === 1) {
-                expenseValues.push(result.totalInvestment + result.monthlyExpenses);
-              } else {
-                expenseValues.push(result.monthlyExpenses);
-              }
+              expenseValues.push(i === 1 ? (result.totalInvestment + result.monthlyExpenses) : result.monthlyExpenses);
             }
             const labels = [];
             for (let i = 1; i <= projectionMonths; i++) {
               labels.push("M" + i);
             }
+
             if (chartInstanceRef.current) {
               chartInstanceRef.current.data.labels = labels;
               chartInstanceRef.current.data.datasets[0].data = cumulativeNetIncome;
@@ -246,7 +228,9 @@
                 options: {
                   responsive: true,
                   scales: {
-                    y: { beginAtZero: true }
+                    y: {
+                      beginAtZero: true,
+                    },
                   },
                 },
               });
@@ -254,7 +238,7 @@
           }
         }, [result, projectionMonths]);
 
-        // Helper function for human-readable formatting
+        // Helper for human-readable formatting
         const formatNumber = (num) => {
           return Number(num).toLocaleString('en-US', {
             minimumFractionDigits: 2,
@@ -262,18 +246,17 @@
           });
         };
 
-        // Build table rows for projection months.
-        // Table Columns: Month | Setup Cost | Total Revenue | Monthly Operation Expenses | Partner Profit Sharing | Monthly Net Income | Total Net Income
+        // Build table rows for projection months
+        // Table order:
+        // Month | Setup Cost | Total Revenue | Monthly Operation Expenses | Partner Profit Sharing | Monthly Net Income | Total Net Income
         const renderTableRows = () => {
           if (!result) return null;
           const rows = [];
           let cumulativeNetIncome = 0;
           for (let i = 1; i <= projectionMonths; i++) {
-            const cumulativeRevenue = (i - 1) * result.totalChargingRevenue;
+            const cumulativeRevenue = (i - 1) * result.monthlyRevenue;
             const monthlyExpense = result.monthlyExpenses;
-            const monthlyNetIncome = i === 1 
-              ? -(result.totalInvestment + result.monthlyExpenses)
-              : result.monthlyNetProfit;
+            const monthlyNetIncome = i === 1 ? -(result.totalInvestment + result.monthlyExpenses) : result.monthlyNetProfit;
             const partnerProfit = i === 1 ? 0 : result.partnerPayment;
             cumulativeNetIncome += monthlyNetIncome;
             rows.push(
@@ -295,142 +278,107 @@
           <div className="card">
             <div className="card-body">
               <form onSubmit={handleSubmit}>
-                {/* Global Parameters */}
+                {/* Basic Inputs */}
                 <div className="form-group">
                   <label>Cost per Charger (RM):</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={costPerCharger}
-                    onChange={(e) => setCostPerCharger(parseFloat(e.target.value))}
-                  />
+                  <input type="number" className="form-control" value={costPerCharger} onChange={e => setCostPerCharger(parseFloat(e.target.value))} />
                 </div>
                 <div className="form-group">
                   <label>Infrastructure Cost (RM):</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={infrastructureCost}
-                    onChange={(e) => setInfrastructureCost(parseFloat(e.target.value))}
-                  />
+                  <input type="number" className="form-control" value={infrastructureCost} onChange={e => setInfrastructureCost(parseFloat(e.target.value))} />
                 </div>
                 <div className="form-group">
                   <label>Charger Power Rating (kW):</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={chargerPowerRating}
-                    onChange={(e) => setChargerPowerRating(parseFloat(e.target.value))}
-                  />
+                  <input type="number" className="form-control" value={chargerPowerRating} onChange={e => setChargerPowerRating(parseFloat(e.target.value))} />
                 </div>
-                <div className="form-group">
-                  <label>Average Charging Power (%):</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={averageChargingPower}
-                    onChange={(e) => setAverageChargingPower(parseFloat(e.target.value))}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Electricity Cost (RM/kWh):</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={electricityCost}
-                    onChange={(e) => setElectricityCost(parseFloat(e.target.value))}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Profit Sharing (% of Gross Profit):</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={profitSharing}
-                    onChange={(e) => setProfitSharing(parseFloat(e.target.value))}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Projection Months:</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={projectionMonths}
-                    onChange={(e) => setProjectionMonths(parseInt(e.target.value))}
-                  />
-                </div>
-
-                {/* Daily Segments Section */}
-                <div className="mt-4">
-                  <h5>Daily Segments (Total hours must not exceed 24)</h5>
-                  {segments.map((seg, index) => (
-                    <div key={index} className="segment-row row">
-                      <div className="col-4">
-                        <label>Hours:</label>
-                        <input
-                          type="number"
-                          className="form-control"
-                          value={seg.hours}
-                          onChange={(e) =>
-                            updateSegment(index, "hours", Number(e.target.value))
-                          }
-                        />
+                {/* If no custom sections, show default parameters */}
+                {sections.length === 0 && (
+                  <>
+                    <div className="form-group">
+                      <label>Average Charging Power (%):</label>
+                      <input type="number" className="form-control" value={averageChargingPower} onChange={e => setAverageChargingPower(parseFloat(e.target.value))} />
+                    </div>
+                    <div className="form-group">
+                      <label>Utilization Rate (%):</label>
+                      <input type="number" className="form-control" value={utilizationRate} onChange={e => setUtilizationRate(parseFloat(e.target.value))} />
+                    </div>
+                    <div className="form-group">
+                      <label>Charging Fee (RM/kWh):</label>
+                      <input type="number" className="form-control" value={chargingFee} onChange={e => setChargingFee(parseFloat(e.target.value))} />
+                    </div>
+                  </>
+                )}
+                {/* Custom Charging Sections */}
+                <div className="mb-3">
+                  <h5>Custom Charging Sections (Optional)</h5>
+                  <p className="text-muted">Define sections for different time blocks (Total hours ≤ 24)</p>
+                  {sections.map((sec, index) => (
+                    <div key={index} className="form-row align-items-end mb-2">
+                      <div className="col">
+                        <label>Hours</label>
+                        <input type="number" className="form-control" value={sec.hours} onChange={e => updateSection(index, 'hours', e.target.value)} />
                       </div>
-                      <div className="col-4">
-                        <label>Charging Fee (RM/kWh):</label>
-                        <input
-                          type="number"
-                          className="form-control"
-                          value={seg.chargingFee}
-                          onChange={(e) =>
-                            updateSegment(index, "chargingFee", Number(e.target.value))
-                          }
-                        />
+                      <div className="col">
+                        <label>Charging Fee (RM/kWh)</label>
+                        <input type="number" className="form-control" value={sec.fee} onChange={e => updateSection(index, 'fee', e.target.value)} />
                       </div>
-                      <div className="col-3">
-                        <label>Utilization Rate (%):</label>
-                        <input
-                          type="number"
-                          className="form-control"
-                          value={seg.utilizationRate}
-                          onChange={(e) =>
-                            updateSegment(index, "utilizationRate", Number(e.target.value))
-                          }
-                        />
+                      <div className="col">
+                        <label>Utilization Rate (%)</label>
+                        <input type="number" className="form-control" value={sec.utilization} onChange={e => updateSection(index, 'utilization', e.target.value)} />
                       </div>
-                      <div className="col-1 d-flex align-items-end">
-                        {segments.length > 1 && (
-                          <button
-                            type="button"
-                            className="btn btn-sm btn-danger"
-                            onClick={() => removeSegment(index)}
-                          >
-                            X
-                          </button>
-                        )}
+                      <div className="col-auto">
+                        <button type="button" className="btn btn-danger" onClick={() => removeSection(index)}>X</button>
                       </div>
                     </div>
                   ))}
-                  {segmentError && <p className="error">{segmentError}</p>}
-                  <button type="button" className="btn btn-secondary btn-sm" onClick={addSegment}>
-                    Add Segment
-                  </button>
+                  {sectionsError && <p className="text-danger">{sectionsError}</p>}
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={addSection}>Add Section</button>
                 </div>
-
-                <button type="submit" className="btn btn-primary mt-3">
+                {/* Additional Inputs */}
+                <div className="form-group">
+                  <label>Electricity Cost (RM/kWh):</label>
+                  <input type="number" className="form-control" value={electricityCost} onChange={e => setElectricityCost(parseFloat(e.target.value))} />
+                </div>
+                <div className="form-group">
+                  <label>Profit Sharing (% of Gross Profit):</label>
+                  <input type="number" className="form-control" value={profitSharing} onChange={e => setProfitSharing(parseFloat(e.target.value))} />
+                </div>
+                <div className="form-group">
+                  <label>Hosting Fee (RM):</label>
+                  <input type="number" className="form-control" value={hostingFee} onChange={e => setHostingFee(parseFloat(e.target.value))} />
+                </div>
+                <div className="form-group">
+                  <label>Maintenance Fee (RM):</label>
+                  <input type="number" className="form-control" value={maintenanceFee} onChange={e => setMaintenanceFee(parseFloat(e.target.value))} />
+                </div>
+                <div className="form-group">
+                  <label>Tax Imposed (%):</label>
+                  <input type="number" className="form-control" value={taxImposed} onChange={e => setTaxImposed(parseFloat(e.target.value))} />
+                </div>
+                <div className="form-group">
+                  <label>Government Grant (RM):</label>
+                  <input type="number" className="form-control" value={governmentGrant} onChange={e => setGovernmentGrant(parseFloat(e.target.value))} />
+                </div>
+                <div className="form-group">
+                  <label>Projection Months:</label>
+                  <input type="number" className="form-control" value={projectionMonths} onChange={e => setProjectionMonths(parseInt(e.target.value))} />
+                </div>
+                <button type="submit" className="btn btn-primary" disabled={sectionsError !== ""}>
                   Calculate ROI
                 </button>
               </form>
-              {result && !segmentError && (
+              {result && (
                 <div className="mt-4">
                   <h4>Results</h4>
                   <p>
                     <strong>Monthly Energy Delivered:</strong>{" "}
-                    {formatNumber(result.totalEnergy)} kWh
+                    {sections.length === 0
+                      ? formatNumber(chargerPowerRating * (averageChargingPower/100) * ((utilizationRate/100)*hoursInMonth))
+                      : "Calculated via sections"}
                   </p>
                   <p>
                     <strong>Total Charging Revenue (per month):</strong> RM{" "}
-                    {formatNumber(result.totalChargingRevenue)}
+                    {formatNumber(result.monthlyRevenue)}
                   </p>
                   <p>
                     <strong>Monthly Electricity Cost:</strong> RM{" "}
@@ -442,14 +390,14 @@
                   </p>
                   <p>
                     <strong>Gross Profit (Before Profit Sharing):</strong> RM{" "}
-                    {formatNumber(result.monthlyGrossProfit)}
+                    {formatNumber(result.grossProfit)}
                   </p>
                   <p>
                     <strong>Partner Payment (Profit Sharing):</strong> RM{" "}
                     {formatNumber(result.partnerPayment)}
                   </p>
                   <p>
-                    <strong>Monthly Net Profit (After Profit Sharing):</strong> RM{" "}
+                    <strong>Monthly Net Profit (After Tax):</strong> RM{" "}
                     {formatNumber(result.monthlyNetProfit)}
                   </p>
                   <p>
@@ -459,7 +407,7 @@
                     <strong>Annual ROI:</strong> {formatNumber(result.annualROI)}%
                   </p>
                   <p>
-                    <strong>Total Investment (Setup & Purchase Cost):</strong> RM{" "}
+                    <strong>Total Investment (Setup & Purchase Cost minus Grant):</strong> RM{" "}
                     {formatNumber(result.totalInvestment)}
                   </p>
                   <p>
