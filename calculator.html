@@ -26,6 +26,22 @@
       .card {
         margin-bottom: 20px;
       }
+      .stats-box {
+        border: 1px solid #ddd;
+        border-radius: 5px;
+        padding: 15px;
+        background: #fff;
+        text-align: center;
+      }
+      .stats-box h6 {
+        margin-bottom: 5px;
+        font-weight: bold;
+        font-size: 0.9rem;
+      }
+      .stats-box p {
+        font-size: 1.2rem;
+        margin: 0;
+      }
       canvas {
         margin-top: 20px;
       }
@@ -93,7 +109,7 @@
           setSections(newSections);
         };
 
-        // Validate that the sum of hours across sections is ≤ 24
+        // Validate total hours across sections ≤ 24
         React.useEffect(() => {
           const totalHours = sections.reduce((sum, sec) => sum + (sec.hours || 0), 0);
           if (totalHours > 24) {
@@ -107,7 +123,7 @@
         const calculateROI = () => {
           let monthlyRevenue, monthlyElectricityCost;
           if (sections.length > 0) {
-            // Use multi-section calculation
+            // Multi-section calculation
             let dailyRevenue = 0;
             let dailyElectricity = 0;
             sections.forEach(sec => {
@@ -117,7 +133,7 @@
             monthlyRevenue = dailyRevenue * 30;
             monthlyElectricityCost = dailyElectricity * 30;
           } else {
-            // Use default calculation
+            // Default calculation
             const energyDelivered = chargerPowerRating * (averageChargingPower / 100) * ((utilizationRate / 100) * hoursInMonth);
             monthlyRevenue = energyDelivered * chargingFee;
             monthlyElectricityCost = energyDelivered * electricityCost;
@@ -129,7 +145,7 @@
           const netProfitBeforeTax = grossProfit - partnerPayment;
           const monthlyNetProfit = netProfitBeforeTax * (1 - taxImposed / 100);
 
-          // Total investment reduced by government grant (not below 0)
+          // Total investment reduced by government grant (minimum 0)
           let totalInvestment = costPerCharger + infrastructureCost - governmentGrant;
           if (totalInvestment < 0) totalInvestment = 0;
 
@@ -156,8 +172,7 @@
           setResult(res);
         };
 
-        // Compute Break Even Month:
-        // Month 1 net income = -(totalInvestment + monthlyExpenses), subsequent months = monthlyNetProfit
+        // Compute Break Even Month
         const getBreakEvenMonth = () => {
           if (!result) return null;
           let cumulative = 0;
@@ -170,8 +185,8 @@
         };
 
         // Chart.js integration:
-        // - Cumulative Net Income: Month 1 = -(totalInvestment + monthlyExpenses), Months 2+ = monthlyNetProfit (cumulative)
-        // - Total Expenses: Month 1 = (totalInvestment + monthlyExpenses), Months 2+ = monthlyExpenses (non-cumulative)
+        // Cumulative Net Income: Month 1 = -(totalInvestment + monthlyExpenses), subsequent months add monthlyNetProfit.
+        // Total Expenses: Month 1 = totalInvestment + monthlyExpenses, Months 2+ = monthlyExpenses.
         const chartRef = React.useRef(null);
         const chartInstanceRef = React.useRef(null);
 
@@ -238,7 +253,7 @@
           }
         }, [result, projectionMonths]);
 
-        // Helper for human-readable formatting
+        // Helper function for human-readable formatting
         const formatNumber = (num) => {
           return Number(num).toLocaleString('en-US', {
             minimumFractionDigits: 2,
@@ -246,9 +261,58 @@
           });
         };
 
-        // Build table rows for projection months
-        // Table order:
-        // Month | Setup Cost | Total Revenue | Monthly Operation Expenses | Partner Profit Sharing | Monthly Net Income | Total Net Income
+        // Build responsive stat boxes (4 columns per row)
+        const renderStatsBoxes = () => {
+          if (!result) return null;
+          return (
+            <div className="row">
+              <div className="col-md-3 col-6 mb-3">
+                <div className="stats-box">
+                  <h6>Total Charging Revenue (RM)</h6>
+                  <p>{formatNumber(result.monthlyRevenue)}</p>
+                </div>
+              </div>
+              <div className="col-md-3 col-6 mb-3">
+                <div className="stats-box">
+                  <h6>Monthly Operation Expense (RM)</h6>
+                  <p>{formatNumber(result.monthlyExpenses)}</p>
+                </div>
+              </div>
+              <div className="col-md-3 col-6 mb-3">
+                <div className="stats-box">
+                  <h6>Partner Profit Sharing (RM)</h6>
+                  <p>{formatNumber(result.partnerPayment)}</p>
+                </div>
+              </div>
+              <div className="col-md-3 col-6 mb-3">
+                <div className="stats-box">
+                  <h6>Monthly Net Profit (RM)</h6>
+                  <p>{formatNumber(result.monthlyNetProfit)}</p>
+                </div>
+              </div>
+              <div className="col-md-3 col-6 mb-3">
+                <div className="stats-box">
+                  <h6>Monthly ROI (%)</h6>
+                  <p>{formatNumber(result.monthlyROI)}</p>
+                </div>
+              </div>
+              <div className="col-md-3 col-6 mb-3">
+                <div className="stats-box">
+                  <h6>Annual ROI (%)</h6>
+                  <p>{formatNumber(result.annualROI)}</p>
+                </div>
+              </div>
+              <div className="col-md-3 col-6 mb-3">
+                <div className="stats-box">
+                  <h6>Break Even Month</h6>
+                  <p>{getBreakEvenMonth()}</p>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        // Build table rows for projection
         const renderTableRows = () => {
           if (!result) return null;
           const rows = [];
@@ -278,35 +342,45 @@
           <div className="card">
             <div className="card-body">
               <form onSubmit={handleSubmit}>
-                {/* Basic Inputs */}
-                <div className="form-group">
-                  <label>Cost per Charger (RM):</label>
-                  <input type="number" className="form-control" value={costPerCharger} onChange={e => setCostPerCharger(parseFloat(e.target.value))} />
+                {/* Row 1: Basic Inputs */}
+                <div className="form-row">
+                  <div className="form-group col-md-3">
+                    <label>Cost per Charger (RM):</label>
+                    <input type="number" className="form-control" value={costPerCharger} onChange={e => setCostPerCharger(parseFloat(e.target.value))} />
+                  </div>
+                  <div className="form-group col-md-3">
+                    <label>Infrastructure Cost (RM):</label>
+                    <input type="number" className="form-control" value={infrastructureCost} onChange={e => setInfrastructureCost(parseFloat(e.target.value))} />
+                  </div>
+                  <div className="form-group col-md-3">
+                    <label>Charger Power Rating (kW):</label>
+                    <input type="number" className="form-control" value={chargerPowerRating} onChange={e => setChargerPowerRating(parseFloat(e.target.value))} />
+                  </div>
+                  <div className="form-group col-md-3">
+                    <label>Average Charging Power (%):</label>
+                    <input type="number" className="form-control" value={averageChargingPower} onChange={e => setAverageChargingPower(parseFloat(e.target.value))} />
+                  </div>
                 </div>
-                <div className="form-group">
-                  <label>Infrastructure Cost (RM):</label>
-                  <input type="number" className="form-control" value={infrastructureCost} onChange={e => setInfrastructureCost(parseFloat(e.target.value))} />
-                </div>
-                <div className="form-group">
-                  <label>Charger Power Rating (kW):</label>
-                  <input type="number" className="form-control" value={chargerPowerRating} onChange={e => setChargerPowerRating(parseFloat(e.target.value))} />
-                </div>
-                {/* If no custom sections, show default parameters */}
+                {/* Row 2: Default Charging Parameters */}
                 {sections.length === 0 && (
-                  <>
-                    <div className="form-group">
-                      <label>Average Charging Power (%):</label>
-                      <input type="number" className="form-control" value={averageChargingPower} onChange={e => setAverageChargingPower(parseFloat(e.target.value))} />
-                    </div>
-                    <div className="form-group">
+                  <div className="form-row">
+                    <div className="form-group col-md-3">
                       <label>Utilization Rate (%):</label>
                       <input type="number" className="form-control" value={utilizationRate} onChange={e => setUtilizationRate(parseFloat(e.target.value))} />
                     </div>
-                    <div className="form-group">
+                    <div className="form-group col-md-3">
                       <label>Charging Fee (RM/kWh):</label>
                       <input type="number" className="form-control" value={chargingFee} onChange={e => setChargingFee(parseFloat(e.target.value))} />
                     </div>
-                  </>
+                    <div className="form-group col-md-3">
+                      <label>Electricity Cost (RM/kWh):</label>
+                      <input type="number" className="form-control" value={electricityCost} onChange={e => setElectricityCost(parseFloat(e.target.value))} />
+                    </div>
+                    <div className="form-group col-md-3">
+                      <label>Profit Sharing (%):</label>
+                      <input type="number" className="form-control" value={profitSharing} onChange={e => setProfitSharing(parseFloat(e.target.value))} />
+                    </div>
+                  </div>
                 )}
                 {/* Custom Charging Sections */}
                 <div className="mb-3">
@@ -314,54 +388,50 @@
                   <p className="text-muted">Define sections for different time blocks (Total hours ≤ 24)</p>
                   {sections.map((sec, index) => (
                     <div key={index} className="form-row align-items-end mb-2">
-                      <div className="col">
+                      <div className="form-group col-md-3">
                         <label>Hours</label>
                         <input type="number" className="form-control" value={sec.hours} onChange={e => updateSection(index, 'hours', e.target.value)} />
                       </div>
-                      <div className="col">
+                      <div className="form-group col-md-3">
                         <label>Charging Fee (RM/kWh)</label>
                         <input type="number" className="form-control" value={sec.fee} onChange={e => updateSection(index, 'fee', e.target.value)} />
                       </div>
-                      <div className="col">
+                      <div className="form-group col-md-3">
                         <label>Utilization Rate (%)</label>
                         <input type="number" className="form-control" value={sec.utilization} onChange={e => updateSection(index, 'utilization', e.target.value)} />
                       </div>
-                      <div className="col-auto">
-                        <button type="button" className="btn btn-danger" onClick={() => removeSection(index)}>X</button>
+                      <div className="form-group col-md-3">
+                        <button type="button" className="btn btn-danger btn-block" onClick={() => removeSection(index)}>X</button>
                       </div>
                     </div>
                   ))}
                   {sectionsError && <p className="text-danger">{sectionsError}</p>}
                   <button type="button" className="btn btn-secondary btn-sm" onClick={addSection}>Add Section</button>
                 </div>
-                {/* Additional Inputs */}
-                <div className="form-group">
-                  <label>Electricity Cost (RM/kWh):</label>
-                  <input type="number" className="form-control" value={electricityCost} onChange={e => setElectricityCost(parseFloat(e.target.value))} />
+                {/* Additional Parameters */}
+                <div className="form-row">
+                  <div className="form-group col-md-3">
+                    <label>Hosting Fee (RM):</label>
+                    <input type="number" className="form-control" value={hostingFee} onChange={e => setHostingFee(parseFloat(e.target.value))} />
+                  </div>
+                  <div className="form-group col-md-3">
+                    <label>Maintenance Fee (RM):</label>
+                    <input type="number" className="form-control" value={maintenanceFee} onChange={e => setMaintenanceFee(parseFloat(e.target.value))} />
+                  </div>
+                  <div className="form-group col-md-3">
+                    <label>Tax Imposed (%):</label>
+                    <input type="number" className="form-control" value={taxImposed} onChange={e => setTaxImposed(parseFloat(e.target.value))} />
+                  </div>
+                  <div className="form-group col-md-3">
+                    <label>Government Grant (RM):</label>
+                    <input type="number" className="form-control" value={governmentGrant} onChange={e => setGovernmentGrant(parseFloat(e.target.value))} />
+                  </div>
                 </div>
-                <div className="form-group">
-                  <label>Profit Sharing (% of Gross Profit):</label>
-                  <input type="number" className="form-control" value={profitSharing} onChange={e => setProfitSharing(parseFloat(e.target.value))} />
-                </div>
-                <div className="form-group">
-                  <label>Hosting Fee (RM):</label>
-                  <input type="number" className="form-control" value={hostingFee} onChange={e => setHostingFee(parseFloat(e.target.value))} />
-                </div>
-                <div className="form-group">
-                  <label>Maintenance Fee (RM):</label>
-                  <input type="number" className="form-control" value={maintenanceFee} onChange={e => setMaintenanceFee(parseFloat(e.target.value))} />
-                </div>
-                <div className="form-group">
-                  <label>Tax Imposed (%):</label>
-                  <input type="number" className="form-control" value={taxImposed} onChange={e => setTaxImposed(parseFloat(e.target.value))} />
-                </div>
-                <div className="form-group">
-                  <label>Government Grant (RM):</label>
-                  <input type="number" className="form-control" value={governmentGrant} onChange={e => setGovernmentGrant(parseFloat(e.target.value))} />
-                </div>
-                <div className="form-group">
-                  <label>Projection Months:</label>
-                  <input type="number" className="form-control" value={projectionMonths} onChange={e => setProjectionMonths(parseInt(e.target.value))} />
+                <div className="form-row">
+                  <div className="form-group col-md-3">
+                    <label>Projection Months:</label>
+                    <input type="number" className="form-control" value={projectionMonths} onChange={e => setProjectionMonths(parseInt(e.target.value))} />
+                  </div>
                 </div>
                 <button type="submit" className="btn btn-primary" disabled={sectionsError !== ""}>
                   Calculate ROI
@@ -370,51 +440,8 @@
               {result && (
                 <div className="mt-4">
                   <h4>Results</h4>
-                  <p>
-                    <strong>Monthly Energy Delivered:</strong>{" "}
-                    {sections.length === 0
-                      ? formatNumber(chargerPowerRating * (averageChargingPower/100) * ((utilizationRate/100)*hoursInMonth))
-                      : "Calculated via sections"}
-                  </p>
-                  <p>
-                    <strong>Total Charging Revenue (per month):</strong> RM{" "}
-                    {formatNumber(result.monthlyRevenue)}
-                  </p>
-                  <p>
-                    <strong>Monthly Electricity Cost:</strong> RM{" "}
-                    {formatNumber(result.monthlyElectricityCost)}
-                  </p>
-                  <p>
-                    <strong>Monthly Operation Expense (Electricity, Hosting & Maintenance):</strong> RM{" "}
-                    {formatNumber(result.monthlyExpenses)}
-                  </p>
-                  <p>
-                    <strong>Gross Profit (Before Profit Sharing):</strong> RM{" "}
-                    {formatNumber(result.grossProfit)}
-                  </p>
-                  <p>
-                    <strong>Partner Payment (Profit Sharing):</strong> RM{" "}
-                    {formatNumber(result.partnerPayment)}
-                  </p>
-                  <p>
-                    <strong>Monthly Net Profit (After Tax):</strong> RM{" "}
-                    {formatNumber(result.monthlyNetProfit)}
-                  </p>
-                  <p>
-                    <strong>Monthly ROI:</strong> {formatNumber(result.monthlyROI)}%
-                  </p>
-                  <p>
-                    <strong>Annual ROI:</strong> {formatNumber(result.annualROI)}%
-                  </p>
-                  <p>
-                    <strong>Total Investment (Setup & Purchase Cost minus Grant):</strong> RM{" "}
-                    {formatNumber(result.totalInvestment)}
-                  </p>
-                  <p>
-                    <strong>Break Even Month:</strong> {getBreakEvenMonth()}
-                  </p>
+                  {renderStatsBoxes()}
                   <canvas ref={chartRef} width="600" height="400"></canvas>
-
                   <h4 className="mt-4">Projection (over {projectionMonths} months)</h4>
                   <table className="table table-bordered table-striped">
                     <thead>
