@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>EV Charger ROI Calculator TEest</title>
+    <title>EV Charger ROI Calculator</title>
     <meta name="description" content="EV Charger ROI Calculator Dashboard" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <!-- Bootstrap CSS -->
@@ -26,8 +26,22 @@
       .card {
         margin-bottom: 20px;
       }
+      .segment-row {
+        border: 1px solid #ddd;
+        padding: 10px;
+        margin-bottom: 10px;
+        border-radius: 4px;
+        background-color: #fafafa;
+      }
+      .segment-header {
+        font-weight: bold;
+        margin-bottom: 10px;
+      }
       canvas {
         margin-top: 20px;
+      }
+      .error {
+        color: red;
       }
     </style>
   </head>
@@ -49,56 +63,90 @@
 
     <script type="text/babel">
       function ROICalculator() {
-        // State variables for user inputs with default values
+        // Global parameters
         const [costPerCharger, setCostPerCharger] = React.useState(5000);
         const [infrastructureCost, setInfrastructureCost] = React.useState(2000);
         const [chargerPowerRating, setChargerPowerRating] = React.useState(50); // in kW
         const [averageChargingPower, setAverageChargingPower] = React.useState(80); // in %
-        const [utilizationRate, setUtilizationRate] = React.useState(30); // in %
-        const [chargingFee, setChargingFee] = React.useState(1); // RM per kWh
         const [electricityCost, setElectricityCost] = React.useState(0.5); // RM per kWh
+        const [hostingCost] = React.useState(80); // RM
+        const [maintenanceFee] = React.useState(350); // RM
         const [profitSharing, setProfitSharing] = React.useState(20); // in %
         const [projectionMonths, setProjectionMonths] = React.useState(12); // dynamic projection months
+
+        // For daily segments, we initialize with one default segment covering 24 hours.
+        const [segments, setSegments] = React.useState([
+          { hours: 24, chargingFee: 1, utilizationRate: 30 }
+        ]);
+
+        // Hold validation error for segments
+        const [segmentError, setSegmentError] = React.useState("");
+
+        // For storing calculated result
         const [result, setResult] = React.useState(null);
+        const daysInMonth = 30;
 
-        // Fixed monthly operating costs
-        const hostingCost = 80; // RM
-        const maintenanceFee = 350; // RM
-        // Assume 720 hours per month (30 days * 24 hours)
-        const hoursInMonth = 720;
+        // Validate that total hours from segments does not exceed 24.
+        const validateSegments = () => {
+          const totalHours = segments.reduce((sum, seg) => sum + Number(seg.hours || 0), 0);
+          if (totalHours > 24) {
+            setSegmentError("Total hours across segments cannot exceed 24.");
+            return false;
+          } else {
+            setSegmentError("");
+            return true;
+          }
+        };
 
-        // Function to calculate ROI and other metrics
+        // When segments change, revalidate.
+        React.useEffect(() => {
+          validateSegments();
+        }, [segments]);
+
+        // Functions to handle segment changes
+        const updateSegment = (index, field, value) => {
+          const newSegments = [...segments];
+          newSegments[index][field] = value;
+          setSegments(newSegments);
+        };
+
+        const addSegment = () => {
+          // Default new segment with 0 hours.
+          setSegments([...segments, { hours: 0, chargingFee: 0, utilizationRate: 0 }]);
+        };
+
+        const removeSegment = (index) => {
+          const newSegments = segments.filter((_, i) => i !== index);
+          setSegments(newSegments);
+        };
+
+        // Calculate ROI based on segments.
         const calculateROI = () => {
-          // Monthly energy delivered in kWh
-          const energyDelivered =
-            chargerPowerRating *
-            (averageChargingPower / 100) *
-            ((utilizationRate / 100) * hoursInMonth);
-
-          // Total monthly charging revenue (if revenue were generated every month)
-          const totalChargingRevenue = energyDelivered * chargingFee;
-          // Monthly electricity cost incurred
-          const monthlyElectricityCost = energyDelivered * electricityCost;
-          // Total fixed monthly operating expenses (Electricity, Hosting & Maintenance)
+          // If segments are invalid, do not calculate.
+          if (!validateSegments()) return null;
+          let totalEnergy = 0;
+          let totalRevenue = 0;
+          segments.forEach((seg) => {
+            const segHours = Number(seg.hours);
+            const segUtil = Number(seg.utilizationRate);
+            const segFee = Number(seg.chargingFee);
+            // Energy delivered for this segment over the month:
+            const segEnergy = chargerPowerRating * (averageChargingPower / 100) * (segUtil / 100) * (segHours * daysInMonth);
+            totalEnergy += segEnergy;
+            totalRevenue += segEnergy * segFee;
+          });
+          const monthlyElectricityCost = totalEnergy * electricityCost;
           const monthlyExpenses = monthlyElectricityCost + hostingCost + maintenanceFee;
-          // Gross profit before profit sharing
-          const monthlyGrossProfit = totalChargingRevenue - monthlyExpenses;
-
-          // Profit sharing is applied on the gross profit
+          const monthlyGrossProfit = totalRevenue - monthlyExpenses;
           const partnerPayment = monthlyGrossProfit * (profitSharing / 100);
-          // Net profit after paying the partner (if revenue generated that month)
           const monthlyNetProfit = monthlyGrossProfit - partnerPayment;
-
-          // Total upfront investment per charger (setup + purchase cost)
           const totalInvestment = costPerCharger + infrastructureCost;
-
-          // ROI calculations (if revenue generated every month)
           const monthlyROI = (monthlyNetProfit / totalInvestment) * 100;
           const annualROI = monthlyROI * 12;
 
           return {
-            energyDelivered,
-            totalChargingRevenue,
+            totalEnergy,
+            totalChargingRevenue: totalRevenue,
             monthlyElectricityCost,
             monthlyExpenses,
             monthlyGrossProfit,
@@ -106,7 +154,7 @@
             monthlyNetProfit,
             monthlyROI,
             annualROI,
-            totalInvestment,
+            totalInvestment
           };
         };
 
@@ -114,7 +162,9 @@
         const handleSubmit = (e) => {
           e.preventDefault();
           const res = calculateROI();
-          setResult(res);
+          if (res) {
+            setResult(res);
+          }
         };
 
         // Compute Break Even Month:
@@ -134,16 +184,12 @@
         };
 
         // Chart.js integration:
-        // Plot cumulative net income over the projection months.
-        // For expenses, display total expenses per month:
-        // Month 1: expense = (setup cost + monthly expense),
-        // Months 2+: expense = monthly expense (non-cumulative).
+        // For cumulative net income: Month 1 uses -(setup cost + monthly expense), then add monthly net profit.
+        // For expenses: Month 1 shows (setup cost + monthly expense), subsequent months show monthly expense.
         const chartRef = React.useRef(null);
         const chartInstanceRef = React.useRef(null);
-
         React.useEffect(() => {
           if (result) {
-            // Build cumulative net income array:
             let cumulativeNetIncome = [];
             let runningTotal = 0;
             for (let i = 1; i <= projectionMonths; i++) {
@@ -153,8 +199,6 @@
               runningTotal += monthlyIncome;
               cumulativeNetIncome.push(runningTotal);
             }
-            // Build expense values array (non-cumulative):
-            // Month 1: expense = setup cost + monthly expense, Months 2+: expense = monthly expense.
             let expenseValues = [];
             for (let i = 1; i <= projectionMonths; i++) {
               if (i === 1) {
@@ -167,7 +211,6 @@
             for (let i = 1; i <= projectionMonths; i++) {
               labels.push("M" + i);
             }
-
             if (chartInstanceRef.current) {
               chartInstanceRef.current.data.labels = labels;
               chartInstanceRef.current.data.datasets[0].data = cumulativeNetIncome;
@@ -183,7 +226,6 @@
                     {
                       label: 'Cumulative Net Income (RM)',
                       data: cumulativeNetIncome,
-                      // Set segment colors: red for negative, green for positive segments
                       segment: {
                         borderColor: ctx => ctx.p0.parsed.y < 0 ? 'red' : 'green'
                       },
@@ -204,9 +246,7 @@
                 options: {
                   responsive: true,
                   scales: {
-                    y: {
-                      beginAtZero: true,
-                    },
+                    y: { beginAtZero: true }
                   },
                 },
               });
@@ -223,27 +263,19 @@
         };
 
         // Build table rows for projection months.
-        // Table Columns Order:
-        // Month | Setup Cost | Total Revenue | Monthly Operation Expenses | Partner Profit Sharing | Monthly Net Income | Total Net Income
+        // Table Columns: Month | Setup Cost | Total Revenue | Monthly Operation Expenses | Partner Profit Sharing | Monthly Net Income | Total Net Income
         const renderTableRows = () => {
           if (!result) return null;
           const rows = [];
           let cumulativeNetIncome = 0;
           for (let i = 1; i <= projectionMonths; i++) {
-            // Total Revenue accumulates from Month 2 onward
             const cumulativeRevenue = (i - 1) * result.totalChargingRevenue;
-            // Monthly Operation Expenses: fixed expense per month
             const monthlyExpense = result.monthlyExpenses;
-            // Monthly Net Income:
-            // Month 1: = 0 revenue - (setup cost + monthly expense)
-            // Months 2+: = monthly net profit (as calculated)
             const monthlyNetIncome = i === 1 
               ? -(result.totalInvestment + result.monthlyExpenses)
               : result.monthlyNetProfit;
-            // Partner Profit Sharing: Month 1 = 0, Months 2+ = partner payment
             const partnerProfit = i === 1 ? 0 : result.partnerPayment;
             cumulativeNetIncome += monthlyNetIncome;
-
             rows.push(
               <tr key={i}>
                 <td>{i}</td>
@@ -263,6 +295,7 @@
           <div className="card">
             <div className="card-body">
               <form onSubmit={handleSubmit}>
+                {/* Global Parameters */}
                 <div className="form-group">
                   <label>Cost per Charger (RM):</label>
                   <input
@@ -300,24 +333,6 @@
                   />
                 </div>
                 <div className="form-group">
-                  <label>Utilization Rate (%):</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={utilizationRate}
-                    onChange={(e) => setUtilizationRate(parseFloat(e.target.value))}
-                  />
-                </div>
-                <div className="form-group">
-                  <label>Charging Fee (RM/kWh):</label>
-                  <input
-                    type="number"
-                    className="form-control"
-                    value={chargingFee}
-                    onChange={(e) => setChargingFee(parseFloat(e.target.value))}
-                  />
-                </div>
-                <div className="form-group">
                   <label>Electricity Cost (RM/kWh):</label>
                   <input
                     type="number"
@@ -344,16 +359,74 @@
                     onChange={(e) => setProjectionMonths(parseInt(e.target.value))}
                   />
                 </div>
-                <button type="submit" className="btn btn-primary">
+
+                {/* Daily Segments Section */}
+                <div className="mt-4">
+                  <h5>Daily Segments (Total hours must not exceed 24)</h5>
+                  {segments.map((seg, index) => (
+                    <div key={index} className="segment-row row">
+                      <div className="col-4">
+                        <label>Hours:</label>
+                        <input
+                          type="number"
+                          className="form-control"
+                          value={seg.hours}
+                          onChange={(e) =>
+                            updateSegment(index, "hours", Number(e.target.value))
+                          }
+                        />
+                      </div>
+                      <div className="col-4">
+                        <label>Charging Fee (RM/kWh):</label>
+                        <input
+                          type="number"
+                          className="form-control"
+                          value={seg.chargingFee}
+                          onChange={(e) =>
+                            updateSegment(index, "chargingFee", Number(e.target.value))
+                          }
+                        />
+                      </div>
+                      <div className="col-3">
+                        <label>Utilization Rate (%):</label>
+                        <input
+                          type="number"
+                          className="form-control"
+                          value={seg.utilizationRate}
+                          onChange={(e) =>
+                            updateSegment(index, "utilizationRate", Number(e.target.value))
+                          }
+                        />
+                      </div>
+                      <div className="col-1 d-flex align-items-end">
+                        {segments.length > 1 && (
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-danger"
+                            onClick={() => removeSegment(index)}
+                          >
+                            X
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                  {segmentError && <p className="error">{segmentError}</p>}
+                  <button type="button" className="btn btn-secondary btn-sm" onClick={addSegment}>
+                    Add Segment
+                  </button>
+                </div>
+
+                <button type="submit" className="btn btn-primary mt-3">
                   Calculate ROI
                 </button>
               </form>
-              {result && (
+              {result && !segmentError && (
                 <div className="mt-4">
                   <h4>Results</h4>
                   <p>
                     <strong>Monthly Energy Delivered:</strong>{" "}
-                    {formatNumber(result.energyDelivered)} kWh
+                    {formatNumber(result.totalEnergy)} kWh
                   </p>
                   <p>
                     <strong>Total Charging Revenue (per month):</strong> RM{" "}
