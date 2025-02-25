@@ -85,7 +85,12 @@
         const [taxImposed, setTaxImposed] = React.useState(0);
         const [governmentGrant, setGovernmentGrant] = React.useState(0);
 
-        // Major maintenance parameters (new section)
+        // New incremental parameters (annual)
+        const [utilizationIncrement, setUtilizationIncrement] = React.useState(0);
+        const [electricityIncrement, setElectricityIncrement] = React.useState(0); // as decimal, e.g. 0.05
+        const [inflation, setInflation] = React.useState(0); // as decimal, e.g. 0.03
+
+        // Major maintenance parameters
         const [majorMaintenancePeriod, setMajorMaintenancePeriod] = React.useState(6);
         const [majorMaintenanceCost, setMajorMaintenanceCost] = React.useState(1000);
 
@@ -96,7 +101,7 @@
         const [result, setResult] = React.useState(null);
         const hoursInMonth = 30 * 24; // 720 hours
 
-        // Functions to manage sections
+        // Functions to manage custom sections
         const addSection = () => {
           setSections([...sections, { hours: 0, fee: 0, utilization: 0 }]);
         };
@@ -113,7 +118,7 @@
           setSections(newSections);
         };
 
-        // Validate total hours in sections ≤ 24
+        // Validate total hours across sections ≤ 24
         React.useEffect(() => {
           const totalHours = sections.reduce((sum, sec) => sum + (sec.hours || 0), 0);
           if (totalHours > 24) {
@@ -123,12 +128,7 @@
           }
         }, [sections]);
 
-        // Updated Calculation Function:
-        // If custom sections are provided, use them; otherwise, use default fields.
-        // Then simulate a projection over the given number of months.
-        // For month 1, net = -(totalInvestment + regularMonthlyExpenses).
-        // For month i>=2, add extra maintenance cost if i is a multiple of majorMaintenancePeriod.
-        // Then compute the average net profit (over months 2..projectionMonths) and use that for ROI.
+        // Simulation of projection over months (using default parameters if no custom sections)
         const calculateROI = () => {
           let monthlyRevenue, monthlyElectricityCost;
           if (sections.length > 0) {
@@ -141,30 +141,61 @@
             monthlyRevenue = dailyRevenue * 30;
             monthlyElectricityCost = dailyElectricity * 30;
           } else {
-            const energyDelivered = chargerPowerRating * (averageChargingPower / 100) * ((utilizationRate / 100) * hoursInMonth);
-            monthlyRevenue = energyDelivered * chargingFee;
-            monthlyElectricityCost = energyDelivered * electricityCost;
+            // For default, adjust parameters annually:
+            let effectiveUtilization = utilizationRate; // for month 1 (yearIndex 0)
+            let effectiveChargingFee = chargingFee; // base
+            let effectiveElectricityCost = electricityCost;
+            let effectiveHostingFee = hostingFee;
+            let effectiveMaintenanceFee = maintenanceFee;
+            // Compute energy delivered with base values
+            const energyDelivered = chargerPowerRating * (averageChargingPower / 100) * ((effectiveUtilization / 100) * hoursInMonth);
+            monthlyRevenue = energyDelivered * effectiveChargingFee;
+            monthlyElectricityCost = energyDelivered * effectiveElectricityCost;
           }
           const regularMonthlyExpenses = monthlyElectricityCost + hostingFee + maintenanceFee;
           let totalInvestment = costPerCharger + infrastructureCost - governmentGrant;
           if (totalInvestment < 0) totalInvestment = 0;
 
-          // Simulate net profit for each month from 1 to projectionMonths
+          // Simulate month-by-month net profit incorporating increments, inflation and major maintenance
           let netProfitArray = [];
+          let monthlyRevenueArray = [];
           for (let i = 1; i <= projectionMonths; i++) {
+            let yearIndex = Math.floor((i - 1) / 12);
+            let effectiveUtilization, effectiveChargingFee, effectiveElectricityCost, effectiveHostingFee, effectiveMaintenanceFee, energyDelivered;
+            if (sections.length === 0) {
+              effectiveUtilization = utilizationRate + utilizationIncrement * yearIndex;
+              effectiveChargingFee = chargingFee * Math.pow(1 + inflation, yearIndex);
+              effectiveElectricityCost = electricityCost * Math.pow(1 + electricityIncrement, yearIndex);
+              effectiveHostingFee = hostingFee * Math.pow(1 + inflation, yearIndex);
+              effectiveMaintenanceFee = maintenanceFee * Math.pow(1 + inflation, yearIndex);
+              energyDelivered = chargerPowerRating * (averageChargingPower / 100) * ((effectiveUtilization / 100) * hoursInMonth);
+              var mRevenue = energyDelivered * effectiveChargingFee;
+              var mElectricityCost = energyDelivered * effectiveElectricityCost;
+              var regularExpenses = mElectricityCost + effectiveHostingFee + effectiveMaintenanceFee;
+              monthlyRevenueArray.push(mRevenue);
+            } else {
+              // For custom sections, use the precomputed values (without increments)
+              var mRevenue = monthlyRevenue;
+              monthlyRevenueArray.push(mRevenue);
+              var regularExpenses = regularMonthlyExpenses;
+            }
+            // Major maintenance cost (adjusted for inflation)
+            let effectiveMajorMaintenanceCost = majorMaintenanceCost * Math.pow(1 + inflation, yearIndex);
+            let extraMaintenance = (i % majorMaintenancePeriod === 0 ? effectiveMajorMaintenanceCost : 0);
+            let effectiveExpense = regularExpenses + extraMaintenance;
+            let grossProfit = monthlyRevenueArray[i - 1] - effectiveExpense;
+            let partnerPayment = grossProfit * (profitSharing / 100);
             let net;
             if (i === 1) {
-              net = -(totalInvestment + regularMonthlyExpenses);
+              net = -(totalInvestment + regularExpenses);
             } else {
-              const extraMaintenance = (i % majorMaintenancePeriod === 0 ? majorMaintenanceCost : 0);
-              const effectiveExpense = regularMonthlyExpenses + extraMaintenance;
-              const grossProfit = monthlyRevenue - effectiveExpense;
-              const partnerPayment = grossProfit * (profitSharing / 100);
               net = (grossProfit - partnerPayment) * (1 - taxImposed / 100);
             }
-            if (i > 1) netProfitArray.push(net);
+            netProfitArray.push(net);
           }
-          const averageNetProfit = netProfitArray.length > 0 ? netProfitArray.reduce((a, b) => a + b, 0) / netProfitArray.length : 0;
+          // Compute average net profit for months 2 to projectionMonths (for ROI calculation)
+          let sumNet = netProfitArray.slice(1).reduce((a, b) => a + b, 0);
+          let averageNetProfit = netProfitArray.length > 1 ? sumNet / (netProfitArray.length - 1) : 0;
           const monthlyROI = totalInvestment > 0 ? (averageNetProfit / totalInvestment) * 100 : 0;
           const annualROI = monthlyROI * 12;
 
@@ -180,6 +211,8 @@
             monthlyNetProfit: averageNetProfit,
             monthlyROI,
             annualROI,
+            monthlyRevenueArray,
+            netProfitArray,
           };
         };
 
@@ -190,7 +223,7 @@
           setResult(res);
         };
 
-        // Compute Break Even Month using the same simulation logic
+        // Compute Break Even Month using simulation
         const getBreakEvenMonth = () => {
           if (!result) return null;
           let cumulative = 0;
@@ -199,11 +232,12 @@
             if (i === 1) {
               net = -(result.totalInvestment + result.regularMonthlyExpenses);
             } else {
-              const extraMaintenance = (i % result.majorMaintenancePeriod === 0 ? result.majorMaintenanceCost : 0);
+              let yearIndex = Math.floor((i - 1) / 12);
+              const extraMaintenance = (i % result.majorMaintenancePeriod === 0 ? majorMaintenanceCost * Math.pow(1 + inflation, yearIndex) : 0);
               const effectiveExpense = result.regularMonthlyExpenses + extraMaintenance;
-              const grossProfit = result.monthlyRevenue - effectiveExpense;
-              const partnerPayment = grossProfit * (result.profitSharing / 100);
-              net = (grossProfit - partnerPayment) * (1 - result.taxImposed / 100);
+              const grossProfit = result.monthlyRevenueArray[i - 1] - effectiveExpense;
+              const partnerPayment = grossProfit * (profitSharing / 100);
+              net = (grossProfit - partnerPayment) * (1 - taxImposed / 100);
             }
             cumulative += net;
             if (cumulative >= 0) return i;
@@ -211,8 +245,7 @@
           return "Not reached within projection period";
         };
 
-        // Chart.js integration:
-        // For each month, compute net and expense similar to the projection table.
+        // Chart: Existing line chart for cumulative net income and total expenses per month
         const chartRef = React.useRef(null);
         const chartInstanceRef = React.useRef(null);
 
@@ -223,15 +256,16 @@
             let expenseValues = [];
             for (let i = 1; i <= projectionMonths; i++) {
               let net, expense;
+              let yearIndex = Math.floor((i - 1) / 12);
               if (i === 1) {
                 net = -(result.totalInvestment + result.regularMonthlyExpenses);
                 expense = result.totalInvestment + result.regularMonthlyExpenses;
               } else {
-                const extraMaintenance = (i % result.majorMaintenancePeriod === 0 ? result.majorMaintenanceCost : 0);
+                const extraMaintenance = (i % result.majorMaintenancePeriod === 0 ? majorMaintenanceCost * Math.pow(1 + inflation, yearIndex) : 0);
                 expense = result.regularMonthlyExpenses + extraMaintenance;
-                const grossProfit = result.monthlyRevenue - expense;
-                const partnerPayment = grossProfit * (result.profitSharing / 100);
-                net = (grossProfit - partnerPayment) * (1 - result.taxImposed / 100);
+                const grossProfit = result.monthlyRevenueArray[i - 1] - expense;
+                const partnerPayment = grossProfit * (profitSharing / 100);
+                net = (grossProfit - partnerPayment) * (1 - taxImposed / 100);
               }
               runningTotal += net;
               cumulativeNetIncome.push(runningTotal);
@@ -241,34 +275,33 @@
             for (let i = 1; i <= projectionMonths; i++) {
               labels.push("M" + i);
             }
-
             if (chartInstanceRef.current) {
               chartInstanceRef.current.data.labels = labels;
               chartInstanceRef.current.data.datasets[0].data = cumulativeNetIncome;
               chartInstanceRef.current.data.datasets[1].data = expenseValues;
               chartInstanceRef.current.update();
             } else {
-              const ctx = chartRef.current.getContext('2d');
+              const ctx = chartRef.current.getContext("2d");
               chartInstanceRef.current = new Chart(ctx, {
-                type: 'line',
+                type: "line",
                 data: {
                   labels: labels,
                   datasets: [
                     {
-                      label: 'Cumulative Net Income (RM)',
+                      label: "Cumulative Net Income (RM)",
                       data: cumulativeNetIncome,
                       segment: {
-                        borderColor: ctx => ctx.p0.parsed.y < 0 ? 'red' : 'green'
+                        borderColor: (ctx) => (ctx.p0.parsed.y < 0 ? "red" : "green"),
                       },
-                      backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                      backgroundColor: "rgba(75, 192, 192, 0.2)",
                       fill: true,
                       tension: 0.1,
                     },
                     {
-                      label: 'Total Expenses (RM)',
+                      label: "Total Expenses (RM)",
                       data: expenseValues,
-                      borderColor: 'rgba(255, 99, 132, 1)',
-                      backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                      borderColor: "rgba(255, 99, 132, 1)",
+                      backgroundColor: "rgba(255, 99, 132, 0.2)",
                       fill: false,
                       tension: 0.1,
                     },
@@ -287,9 +320,156 @@
           }
         }, [result, projectionMonths]);
 
-        // Helper for human-readable formatting
+        // New Chart: Pie Chart for Operating Expense Breakdown (only for default parameters)
+        const pieChartRef = React.useRef(null);
+        const pieChartInstanceRef = React.useRef(null);
+
+        React.useEffect(() => {
+          if (result && sections.length === 0) {
+            // For a typical month (use values from month 2, i.e. base year index 0)
+            const typicalElectricity = result.monthlyElectricityCost || 0;
+            const typicalHosting = hostingFee;
+            const typicalMaintenance = maintenanceFee;
+            const avgMajorMaintenance = majorMaintenanceCost / majorMaintenancePeriod;
+            const data = [typicalElectricity, typicalHosting, typicalMaintenance, avgMajorMaintenance];
+            if (pieChartInstanceRef.current) {
+              pieChartInstanceRef.current.data.datasets[0].data = data;
+              pieChartInstanceRef.current.update();
+            } else {
+              const ctx = pieChartRef.current.getContext("2d");
+              pieChartInstanceRef.current = new Chart(ctx, {
+                type: "pie",
+                data: {
+                  labels: ["Electricity", "Hosting", "Maintenance", "Avg Major Maintenance"],
+                  datasets: [
+                    {
+                      data: data,
+                      backgroundColor: [
+                        "rgba(54, 162, 235, 0.6)",
+                        "rgba(255, 206, 86, 0.6)",
+                        "rgba(75, 192, 192, 0.6)",
+                        "rgba(153, 102, 255, 0.6)",
+                      ],
+                      borderColor: [
+                        "rgba(54, 162, 235, 1)",
+                        "rgba(255, 206, 86, 1)",
+                        "rgba(75, 192, 192, 1)",
+                        "rgba(153, 102, 255, 1)",
+                      ],
+                      borderWidth: 1,
+                    },
+                  ],
+                },
+                options: {
+                  responsive: true,
+                  plugins: {
+                    legend: { position: "bottom" },
+                  },
+                },
+              });
+            }
+          }
+        }, [result, hostingFee, maintenanceFee, majorMaintenanceCost, majorMaintenancePeriod, sections]);
+
+        // New Chart: Stacked Bar Chart for Monthly Expense Breakdown (default parameters only)
+        const barChartRef = React.useRef(null);
+        const barChartInstanceRef = React.useRef(null);
+
+        React.useEffect(() => {
+          if (result && sections.length === 0) {
+            const labels = [];
+            const electricityData = [];
+            const hostingData = [];
+            const maintenanceData = [];
+            const extraMaintenanceData = [];
+            const setupCostData = [];
+            for (let i = 1; i <= projectionMonths; i++) {
+              let yearIndex = Math.floor((i - 1) / 12);
+              if (i === 1) {
+                // For month 1, break down: Setup cost, Electricity, Hosting, Maintenance (no extra maintenance)
+                setupCostData.push(result.totalInvestment);
+                // For month 1, use base values (yearIndex=0)
+                const energyDelivered = chargerPowerRating * (averageChargingPower / 100) * ((utilizationRate / 100) * hoursInMonth);
+                const elec = energyDelivered * electricityCost;
+                electricityData.push(elec);
+                hostingData.push(hostingFee);
+                maintenanceData.push(maintenanceFee);
+                extraMaintenanceData.push(0);
+              } else {
+                // For month i>=2, no setup cost
+                setupCostData.push(0);
+                // Adjust values for inflation/increment
+                const effectiveUtilization = utilizationRate + utilizationIncrement * yearIndex;
+                const effectiveElectricityCost = electricityCost * Math.pow(1 + electricityIncrement, yearIndex);
+                const effectiveHosting = hostingFee * Math.pow(1 + inflation, yearIndex);
+                const effectiveMaintenance = maintenanceFee * Math.pow(1 + inflation, yearIndex);
+                const energyDelivered = chargerPowerRating * (averageChargingPower / 100) * ((effectiveUtilization / 100) * hoursInMonth);
+                const elec = energyDelivered * effectiveElectricityCost;
+                electricityData.push(elec);
+                hostingData.push(effectiveHosting);
+                maintenanceData.push(effectiveMaintenance);
+                const extra = (i % majorMaintenancePeriod === 0 ? majorMaintenanceCost * Math.pow(1 + inflation, yearIndex) : 0);
+                extraMaintenanceData.push(extra);
+              }
+              labels.push("M" + i);
+            }
+            if (barChartInstanceRef.current) {
+              barChartInstanceRef.current.data.labels = labels;
+              barChartInstanceRef.current.data.datasets[0].data = setupCostData;
+              barChartInstanceRef.current.data.datasets[1].data = electricityData;
+              barChartInstanceRef.current.data.datasets[2].data = hostingData;
+              barChartInstanceRef.current.data.datasets[3].data = maintenanceData;
+              barChartInstanceRef.current.data.datasets[4].data = extraMaintenanceData;
+              barChartInstanceRef.current.update();
+            } else {
+              const ctx = barChartRef.current.getContext("2d");
+              barChartInstanceRef.current = new Chart(ctx, {
+                type: "bar",
+                data: {
+                  labels: labels,
+                  datasets: [
+                    {
+                      label: "Setup Cost",
+                      data: setupCostData,
+                      backgroundColor: "rgba(0, 0, 0, 0.7)",
+                    },
+                    {
+                      label: "Electricity",
+                      data: electricityData,
+                      backgroundColor: "rgba(54, 162, 235, 0.6)",
+                    },
+                    {
+                      label: "Hosting",
+                      data: hostingData,
+                      backgroundColor: "rgba(255, 206, 86, 0.6)",
+                    },
+                    {
+                      label: "Maintenance",
+                      data: maintenanceData,
+                      backgroundColor: "rgba(75, 192, 192, 0.6)",
+                    },
+                    {
+                      label: "Major Maintenance",
+                      data: extraMaintenanceData,
+                      backgroundColor: "rgba(153, 102, 255, 0.6)",
+                    },
+                  ],
+                },
+                options: {
+                  responsive: true,
+                  scales: {
+                    x: { stacked: true },
+                    y: { stacked: true, beginAtZero: true },
+                  },
+                },
+              });
+            }
+          }
+        }, [result, projectionMonths, sections, utilizationRate, electricityCost, hostingFee, maintenanceFee, majorMaintenanceCost, majorMaintenancePeriod, inflation, utilizationIncrement, electricityIncrement]);
+
+        // Helper function for human-readable formatting
         const formatNumber = (num) => {
-          return Number(num).toLocaleString('en-US', {
+          return Number(num).toLocaleString("en-US", {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2,
           });
@@ -320,7 +500,7 @@
               </div>
               <div className="col-md-3 col-6 mb-3">
                 <div className="stats-box">
-                  <h6>Monthly Net Profit (Avg) (RM)</h6>
+                  <h6>Avg. Monthly Net Profit (RM)</h6>
                   <p>{formatNumber(result.monthlyNetProfit)}</p>
                 </div>
               </div>
@@ -353,27 +533,28 @@
           let cumulativeNetIncome = 0;
           for (let i = 1; i <= projectionMonths; i++) {
             let net, expense;
+            let yearIndex = Math.floor((i - 1) / 12);
             if (i === 1) {
               net = -(result.totalInvestment + result.regularMonthlyExpenses);
               expense = result.totalInvestment + result.regularMonthlyExpenses;
             } else {
-              const extraMaintenance = (i % result.majorMaintenancePeriod === 0 ? result.majorMaintenanceCost : 0);
+              const extraMaintenance = (i % result.majorMaintenancePeriod === 0 ? majorMaintenanceCost * Math.pow(1 + inflation, yearIndex) : 0);
               expense = result.regularMonthlyExpenses + extraMaintenance;
-              const grossProfit = result.monthlyRevenue - expense;
-              const partnerPayment = grossProfit * (result.profitSharing / 100);
-              net = (grossProfit - partnerPayment) * (1 - result.taxImposed / 100);
+              const grossProfit = result.monthlyRevenueArray[i - 1] - expense;
+              const partnerPayment = grossProfit * (profitSharing / 100);
+              net = (grossProfit - partnerPayment) * (1 - taxImposed / 100);
             }
             cumulativeNetIncome += net;
-            const cumulativeRevenue = (i - 1) * result.monthlyRevenue;
-            const partnerProfit = i === 1 ? 0 : (result.monthlyRevenue - (result.regularMonthlyExpenses + (i % result.majorMaintenancePeriod === 0 ? result.majorMaintenanceCost : 0))) * (result.profitSharing / 100);
+            const cumulativeRevenue = (i - 1) * result.monthlyRevenueArray[0];
+            const partnerProfit = i === 1 ? 0 : (result.monthlyRevenueArray[i - 1] - expense) * (profitSharing / 100);
             rows.push(
               <tr key={i}>
                 <td>{i}</td>
-                <td>{i === 1 ? formatNumber(result.totalInvestment) : '-'}</td>
+                <td>{i === 1 ? formatNumber(result.totalInvestment) : "-"}</td>
                 <td>{formatNumber(cumulativeRevenue)}</td>
                 <td>{formatNumber(expense)}</td>
                 <td>{formatNumber(partnerProfit)}</td>
-                <td>{formatNumber(net)}</td>
+                <td>{formatNumber(i === 1 ? -(result.totalInvestment + result.regularMonthlyExpenses) : net)}</td>
                 <td>{formatNumber(cumulativeNetIncome)}</td>
               </tr>
             );
@@ -404,7 +585,7 @@
                     <input type="number" className="form-control" value={averageChargingPower} onChange={e => setAverageChargingPower(parseFloat(e.target.value))} />
                   </div>
                 </div>
-                {/* Row 2: Default Charging Parameters (if no sections) */}
+                {/* Row 2: Default Charging Parameters (if no custom sections) */}
                 {sections.length === 0 && (
                   <div className="form-row">
                     <div className="form-group col-md-3">
@@ -462,7 +643,22 @@
                     <input type="number" className="form-control" value={governmentGrant} onChange={e => setGovernmentGrant(parseFloat(e.target.value))} />
                   </div>
                 </div>
-                {/* Row 5: Major Maintenance Parameters */}
+                {/* Row 5: Incremental Parameters */}
+                <div className="form-row">
+                  <div className="form-group col-md-3">
+                    <label>Utilization Increment/Year (% pts):</label>
+                    <input type="number" className="form-control" value={utilizationIncrement} onChange={e => setUtilizationIncrement(parseFloat(e.target.value))} />
+                  </div>
+                  <div className="form-group col-md-3">
+                    <label>Electricity Increment/Year (%):</label>
+                    <input type="number" className="form-control" value={electricityIncrement * 100} onChange={e => setElectricityIncrement(parseFloat(e.target.value) / 100)} />
+                  </div>
+                  <div className="form-group col-md-3">
+                    <label>Inflation/Year (%):</label>
+                    <input type="number" className="form-control" value={inflation * 100} onChange={e => setInflation(parseFloat(e.target.value) / 100)} />
+                  </div>
+                </div>
+                {/* Row 6: Major Maintenance Parameters */}
                 <div className="form-row">
                   <div className="form-group col-md-3">
                     <label>Major Maintenance Period (months):</label>
@@ -473,7 +669,7 @@
                     <input type="number" className="form-control" value={majorMaintenanceCost} onChange={e => setMajorMaintenanceCost(parseFloat(e.target.value))} />
                   </div>
                 </div>
-                {/* Row 6: Projection Months */}
+                {/* Row 7: Projection Months */}
                 <div className="form-row">
                   <div className="form-group col-md-3">
                     <label>Projection Months:</label>
@@ -488,7 +684,22 @@
                 <div className="mt-4">
                   <h4>Results</h4>
                   {renderStatsBoxes()}
+                  {/* Existing Line Chart */}
                   <canvas ref={chartRef} width="600" height="400"></canvas>
+                  {/* New Pie Chart (only for default parameters) */}
+                  {sections.length === 0 && (
+                    <>
+                      <h5 className="mt-4">Operating Expense Breakdown</h5>
+                      <canvas ref={pieChartRef} id="pieChart" width="400" height="400"></canvas>
+                    </>
+                  )}
+                  {/* New Stacked Bar Chart (only for default parameters) */}
+                  {sections.length === 0 && (
+                    <>
+                      <h5 className="mt-4">Monthly Expense Breakdown</h5>
+                      <canvas ref={barChartRef} id="barChart" width="600" height="400"></canvas>
+                    </>
+                  )}
                   <h4 className="mt-4">Projection (over {projectionMonths} months)</h4>
                   <table className="table table-bordered table-striped">
                     <thead>
@@ -511,7 +722,11 @@
         );
       }
 
-      ReactDOM.render(<ROICalculator />, document.getElementById('root'));
+      // Refs for new charts
+      const pieChartRef = React.createRef();
+      const barChartRef = React.createRef();
+
+      ReactDOM.render(<ROICalculator />, document.getElementById("root"));
     </script>
   </body>
 </html>
