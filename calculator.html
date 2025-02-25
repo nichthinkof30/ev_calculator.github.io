@@ -85,6 +85,10 @@
         const [taxImposed, setTaxImposed] = React.useState(0);
         const [governmentGrant, setGovernmentGrant] = React.useState(0);
 
+        // Major maintenance parameters (new section)
+        const [majorMaintenancePeriod, setMajorMaintenancePeriod] = React.useState(6);
+        const [majorMaintenanceCost, setMajorMaintenanceCost] = React.useState(1000);
+
         // Multi-section parameters (optional)
         const [sections, setSections] = React.useState([]);
         const [sectionsError, setSectionsError] = React.useState("");
@@ -109,7 +113,7 @@
           setSections(newSections);
         };
 
-        // Validate total hours across sections ≤ 24
+        // Validate total hours in sections ≤ 24
         React.useEffect(() => {
           const totalHours = sections.reduce((sum, sec) => sum + (sec.hours || 0), 0);
           if (totalHours > 24) {
@@ -119,11 +123,15 @@
           }
         }, [sections]);
 
-        // Calculation function
+        // Updated Calculation Function:
+        // If custom sections are provided, use them; otherwise, use default fields.
+        // Then simulate a projection over the given number of months.
+        // For month 1, net = -(totalInvestment + regularMonthlyExpenses).
+        // For month i>=2, add extra maintenance cost if i is a multiple of majorMaintenancePeriod.
+        // Then compute the average net profit (over months 2..projectionMonths) and use that for ROI.
         const calculateROI = () => {
           let monthlyRevenue, monthlyElectricityCost;
           if (sections.length > 0) {
-            // Multi-section calculation
             let dailyRevenue = 0;
             let dailyElectricity = 0;
             sections.forEach(sec => {
@@ -133,35 +141,45 @@
             monthlyRevenue = dailyRevenue * 30;
             monthlyElectricityCost = dailyElectricity * 30;
           } else {
-            // Default calculation
             const energyDelivered = chargerPowerRating * (averageChargingPower / 100) * ((utilizationRate / 100) * hoursInMonth);
             monthlyRevenue = energyDelivered * chargingFee;
             monthlyElectricityCost = energyDelivered * electricityCost;
           }
-
-          const monthlyExpenses = monthlyElectricityCost + hostingFee + maintenanceFee;
-          const grossProfit = monthlyRevenue - monthlyExpenses;
-          const partnerPayment = grossProfit * (profitSharing / 100);
-          const netProfitBeforeTax = grossProfit - partnerPayment;
-          const monthlyNetProfit = netProfitBeforeTax * (1 - taxImposed / 100);
-
-          // Total investment reduced by government grant (minimum 0)
+          const regularMonthlyExpenses = monthlyElectricityCost + hostingFee + maintenanceFee;
           let totalInvestment = costPerCharger + infrastructureCost - governmentGrant;
           if (totalInvestment < 0) totalInvestment = 0;
 
-          const monthlyROI = totalInvestment > 0 ? (monthlyNetProfit / totalInvestment) * 100 : 0;
+          // Simulate net profit for each month from 1 to projectionMonths
+          let netProfitArray = [];
+          for (let i = 1; i <= projectionMonths; i++) {
+            let net;
+            if (i === 1) {
+              net = -(totalInvestment + regularMonthlyExpenses);
+            } else {
+              const extraMaintenance = (i % majorMaintenancePeriod === 0 ? majorMaintenanceCost : 0);
+              const effectiveExpense = regularMonthlyExpenses + extraMaintenance;
+              const grossProfit = monthlyRevenue - effectiveExpense;
+              const partnerPayment = grossProfit * (profitSharing / 100);
+              net = (grossProfit - partnerPayment) * (1 - taxImposed / 100);
+            }
+            if (i > 1) netProfitArray.push(net);
+          }
+          const averageNetProfit = netProfitArray.length > 0 ? netProfitArray.reduce((a, b) => a + b, 0) / netProfitArray.length : 0;
+          const monthlyROI = totalInvestment > 0 ? (averageNetProfit / totalInvestment) * 100 : 0;
           const annualROI = monthlyROI * 12;
 
           return {
             monthlyRevenue,
             monthlyElectricityCost,
-            monthlyExpenses,
-            grossProfit,
-            partnerPayment,
-            monthlyNetProfit,
+            regularMonthlyExpenses,
+            totalInvestment,
+            majorMaintenancePeriod,
+            majorMaintenanceCost,
+            profitSharing,
+            taxImposed,
+            monthlyNetProfit: averageNetProfit,
             monthlyROI,
             annualROI,
-            totalInvestment,
           };
         };
 
@@ -172,21 +190,29 @@
           setResult(res);
         };
 
-        // Compute Break Even Month
+        // Compute Break Even Month using the same simulation logic
         const getBreakEvenMonth = () => {
           if (!result) return null;
           let cumulative = 0;
           for (let i = 1; i <= projectionMonths; i++) {
-            const monthlyIncome = i === 1 ? -(result.totalInvestment + result.monthlyExpenses) : result.monthlyNetProfit;
-            cumulative += monthlyIncome;
+            let net;
+            if (i === 1) {
+              net = -(result.totalInvestment + result.regularMonthlyExpenses);
+            } else {
+              const extraMaintenance = (i % result.majorMaintenancePeriod === 0 ? result.majorMaintenanceCost : 0);
+              const effectiveExpense = result.regularMonthlyExpenses + extraMaintenance;
+              const grossProfit = result.monthlyRevenue - effectiveExpense;
+              const partnerPayment = grossProfit * (result.profitSharing / 100);
+              net = (grossProfit - partnerPayment) * (1 - result.taxImposed / 100);
+            }
+            cumulative += net;
             if (cumulative >= 0) return i;
           }
           return "Not reached within projection period";
         };
 
         // Chart.js integration:
-        // Cumulative Net Income: Month 1 = -(totalInvestment + monthlyExpenses), subsequent months add monthlyNetProfit.
-        // Total Expenses: Month 1 = totalInvestment + monthlyExpenses, Months 2+ = monthlyExpenses.
+        // For each month, compute net and expense similar to the projection table.
         const chartRef = React.useRef(null);
         const chartInstanceRef = React.useRef(null);
 
@@ -194,14 +220,22 @@
           if (result) {
             let cumulativeNetIncome = [];
             let runningTotal = 0;
-            for (let i = 1; i <= projectionMonths; i++) {
-              const monthlyIncome = i === 1 ? -(result.totalInvestment + result.monthlyExpenses) : result.monthlyNetProfit;
-              runningTotal += monthlyIncome;
-              cumulativeNetIncome.push(runningTotal);
-            }
             let expenseValues = [];
             for (let i = 1; i <= projectionMonths; i++) {
-              expenseValues.push(i === 1 ? (result.totalInvestment + result.monthlyExpenses) : result.monthlyExpenses);
+              let net, expense;
+              if (i === 1) {
+                net = -(result.totalInvestment + result.regularMonthlyExpenses);
+                expense = result.totalInvestment + result.regularMonthlyExpenses;
+              } else {
+                const extraMaintenance = (i % result.majorMaintenancePeriod === 0 ? result.majorMaintenanceCost : 0);
+                expense = result.regularMonthlyExpenses + extraMaintenance;
+                const grossProfit = result.monthlyRevenue - expense;
+                const partnerPayment = grossProfit * (result.profitSharing / 100);
+                net = (grossProfit - partnerPayment) * (1 - result.taxImposed / 100);
+              }
+              runningTotal += net;
+              cumulativeNetIncome.push(runningTotal);
+              expenseValues.push(expense);
             }
             const labels = [];
             for (let i = 1; i <= projectionMonths; i++) {
@@ -253,7 +287,7 @@
           }
         }, [result, projectionMonths]);
 
-        // Helper function for human-readable formatting
+        // Helper for human-readable formatting
         const formatNumber = (num) => {
           return Number(num).toLocaleString('en-US', {
             minimumFractionDigits: 2,
@@ -261,7 +295,7 @@
           });
         };
 
-        // Build responsive stat boxes (4 columns per row)
+        // Responsive stat boxes (4 per row)
         const renderStatsBoxes = () => {
           if (!result) return null;
           return (
@@ -274,19 +308,19 @@
               </div>
               <div className="col-md-3 col-6 mb-3">
                 <div className="stats-box">
-                  <h6>Monthly Operation Expense (RM)</h6>
-                  <p>{formatNumber(result.monthlyExpenses)}</p>
+                  <h6>Regular Monthly Expense (RM)</h6>
+                  <p>{formatNumber(result.regularMonthlyExpenses)}</p>
                 </div>
               </div>
               <div className="col-md-3 col-6 mb-3">
                 <div className="stats-box">
-                  <h6>Partner Profit Sharing (RM)</h6>
-                  <p>{formatNumber(result.partnerPayment)}</p>
+                  <h6>Major Maintenance Cost (RM)</h6>
+                  <p>{formatNumber(result.majorMaintenanceCost)}</p>
                 </div>
               </div>
               <div className="col-md-3 col-6 mb-3">
                 <div className="stats-box">
-                  <h6>Monthly Net Profit (RM)</h6>
+                  <h6>Monthly Net Profit (Avg) (RM)</h6>
                   <p>{formatNumber(result.monthlyNetProfit)}</p>
                 </div>
               </div>
@@ -318,19 +352,28 @@
           const rows = [];
           let cumulativeNetIncome = 0;
           for (let i = 1; i <= projectionMonths; i++) {
+            let net, expense;
+            if (i === 1) {
+              net = -(result.totalInvestment + result.regularMonthlyExpenses);
+              expense = result.totalInvestment + result.regularMonthlyExpenses;
+            } else {
+              const extraMaintenance = (i % result.majorMaintenancePeriod === 0 ? result.majorMaintenanceCost : 0);
+              expense = result.regularMonthlyExpenses + extraMaintenance;
+              const grossProfit = result.monthlyRevenue - expense;
+              const partnerPayment = grossProfit * (result.profitSharing / 100);
+              net = (grossProfit - partnerPayment) * (1 - result.taxImposed / 100);
+            }
+            cumulativeNetIncome += net;
             const cumulativeRevenue = (i - 1) * result.monthlyRevenue;
-            const monthlyExpense = result.monthlyExpenses;
-            const monthlyNetIncome = i === 1 ? -(result.totalInvestment + result.monthlyExpenses) : result.monthlyNetProfit;
-            const partnerProfit = i === 1 ? 0 : result.partnerPayment;
-            cumulativeNetIncome += monthlyNetIncome;
+            const partnerProfit = i === 1 ? 0 : (result.monthlyRevenue - (result.regularMonthlyExpenses + (i % result.majorMaintenancePeriod === 0 ? result.majorMaintenanceCost : 0))) * (result.profitSharing / 100);
             rows.push(
               <tr key={i}>
                 <td>{i}</td>
                 <td>{i === 1 ? formatNumber(result.totalInvestment) : '-'}</td>
                 <td>{formatNumber(cumulativeRevenue)}</td>
-                <td>{formatNumber(monthlyExpense)}</td>
+                <td>{formatNumber(expense)}</td>
                 <td>{formatNumber(partnerProfit)}</td>
-                <td>{formatNumber(monthlyNetIncome)}</td>
+                <td>{formatNumber(net)}</td>
                 <td>{formatNumber(cumulativeNetIncome)}</td>
               </tr>
             );
@@ -361,7 +404,7 @@
                     <input type="number" className="form-control" value={averageChargingPower} onChange={e => setAverageChargingPower(parseFloat(e.target.value))} />
                   </div>
                 </div>
-                {/* Row 2: Default Charging Parameters */}
+                {/* Row 2: Default Charging Parameters (if no sections) */}
                 {sections.length === 0 && (
                   <div className="form-row">
                     <div className="form-group col-md-3">
@@ -372,17 +415,9 @@
                       <label>Charging Fee (RM/kWh):</label>
                       <input type="number" className="form-control" value={chargingFee} onChange={e => setChargingFee(parseFloat(e.target.value))} />
                     </div>
-                    <div className="form-group col-md-3">
-                      <label>Electricity Cost (RM/kWh):</label>
-                      <input type="number" className="form-control" value={electricityCost} onChange={e => setElectricityCost(parseFloat(e.target.value))} />
-                    </div>
-                    <div className="form-group col-md-3">
-                      <label>Profit Sharing (%):</label>
-                      <input type="number" className="form-control" value={profitSharing} onChange={e => setProfitSharing(parseFloat(e.target.value))} />
-                    </div>
                   </div>
                 )}
-                {/* Custom Charging Sections */}
+                {/* Row 3: Custom Charging Sections */}
                 <div className="mb-3">
                   <h5>Custom Charging Sections (Optional)</h5>
                   <p className="text-muted">Define sections for different time blocks (Total hours ≤ 24)</p>
@@ -408,7 +443,7 @@
                   {sectionsError && <p className="text-danger">{sectionsError}</p>}
                   <button type="button" className="btn btn-secondary btn-sm" onClick={addSection}>Add Section</button>
                 </div>
-                {/* Additional Parameters */}
+                {/* Row 4: Additional Parameters */}
                 <div className="form-row">
                   <div className="form-group col-md-3">
                     <label>Hosting Fee (RM):</label>
@@ -427,6 +462,18 @@
                     <input type="number" className="form-control" value={governmentGrant} onChange={e => setGovernmentGrant(parseFloat(e.target.value))} />
                   </div>
                 </div>
+                {/* Row 5: Major Maintenance Parameters */}
+                <div className="form-row">
+                  <div className="form-group col-md-3">
+                    <label>Major Maintenance Period (months):</label>
+                    <input type="number" className="form-control" value={majorMaintenancePeriod} onChange={e => setMajorMaintenancePeriod(parseInt(e.target.value))} />
+                  </div>
+                  <div className="form-group col-md-3">
+                    <label>Major Maintenance Cost (RM):</label>
+                    <input type="number" className="form-control" value={majorMaintenanceCost} onChange={e => setMajorMaintenanceCost(parseFloat(e.target.value))} />
+                  </div>
+                </div>
+                {/* Row 6: Projection Months */}
                 <div className="form-row">
                   <div className="form-group col-md-3">
                     <label>Projection Months:</label>
