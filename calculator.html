@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>EV Charger ROI Calculator TEest</title>
+    <meta name="description" content="EV Charger ROI Calculator Dashboard" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- Bootstrap CSS -->
+    <link
+      href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css"
+      rel="stylesheet"
+    />
+    <style>
+      body {
+        background-color: #f0f2f5;
+      }
+      .header {
+        background-color: #fff;
+        border-bottom: 1px solid #e5e5e5;
+        padding: 15px 20px;
+        text-align: center;
+      }
+      .content {
+        padding: 20px;
+      }
+      .card {
+        margin-bottom: 20px;
+      }
+      canvas {
+        margin-top: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h3>EV Charger ROI Calculator</h3>
+    </div>
+    <div class="container content">
+      <div id="root"></div>
+    </div>
+
+    <!-- React, ReactDOM, Babel, Chart.js, jQuery, Bootstrap JS -->
+    <script src="https://unpkg.com/react@17/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.5.2/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+
+    <script type="text/babel">
+      function ROICalculator() {
+        // State variables for user inputs with default values
+        const [costPerCharger, setCostPerCharger] = React.useState(5000);
+        const [infrastructureCost, setInfrastructureCost] = React.useState(2000);
+        const [chargerPowerRating, setChargerPowerRating] = React.useState(50); // in kW
+        const [averageChargingPower, setAverageChargingPower] = React.useState(80); // in %
+        const [utilizationRate, setUtilizationRate] = React.useState(30); // in %
+        const [chargingFee, setChargingFee] = React.useState(1); // RM per kWh
+        const [electricityCost, setElectricityCost] = React.useState(0.5); // RM per kWh
+        const [profitSharing, setProfitSharing] = React.useState(20); // in %
+        const [projectionMonths, setProjectionMonths] = React.useState(12); // dynamic projection months
+        const [result, setResult] = React.useState(null);
+
+        // Fixed monthly operating costs
+        const hostingCost = 80; // RM
+        const maintenanceFee = 350; // RM
+        // Assume 720 hours per month (30 days * 24 hours)
+        const hoursInMonth = 720;
+
+        // Function to calculate ROI and other metrics
+        const calculateROI = () => {
+          // Monthly energy delivered in kWh
+          const energyDelivered =
+            chargerPowerRating *
+            (averageChargingPower / 100) *
+            ((utilizationRate / 100) * hoursInMonth);
+
+          // Total monthly charging revenue (if revenue were generated every month)
+          const totalChargingRevenue = energyDelivered * chargingFee;
+          // Monthly electricity cost incurred
+          const monthlyElectricityCost = energyDelivered * electricityCost;
+          // Total fixed monthly operating expenses (Electricity, Hosting & Maintenance)
+          const monthlyExpenses = monthlyElectricityCost + hostingCost + maintenanceFee;
+          // Gross profit before profit sharing
+          const monthlyGrossProfit = totalChargingRevenue - monthlyExpenses;
+
+          // Profit sharing is applied on the gross profit
+          const partnerPayment = monthlyGrossProfit * (profitSharing / 100);
+          // Net profit after paying the partner (if revenue generated that month)
+          const monthlyNetProfit = monthlyGrossProfit - partnerPayment;
+
+          // Total upfront investment per charger (setup + purchase cost)
+          const totalInvestment = costPerCharger + infrastructureCost;
+
+          // ROI calculations (if revenue generated every month)
+          const monthlyROI = (monthlyNetProfit / totalInvestment) * 100;
+          const annualROI = monthlyROI * 12;
+
+          return {
+            energyDelivered,
+            totalChargingRevenue,
+            monthlyElectricityCost,
+            monthlyExpenses,
+            monthlyGrossProfit,
+            partnerPayment,
+            monthlyNetProfit,
+            monthlyROI,
+            annualROI,
+            totalInvestment,
+          };
+        };
+
+        // Handle form submission to calculate ROI
+        const handleSubmit = (e) => {
+          e.preventDefault();
+          const res = calculateROI();
+          setResult(res);
+        };
+
+        // Compute Break Even Month:
+        // Month 1: net income = -(setup cost + monthly expense)
+        // Months 2+: net income = monthly net profit
+        const getBreakEvenMonth = () => {
+          if (!result) return null;
+          let cumulative = 0;
+          for (let i = 1; i <= projectionMonths; i++) {
+            const monthlyIncome = i === 1
+              ? -(result.totalInvestment + result.monthlyExpenses)
+              : result.monthlyNetProfit;
+            cumulative += monthlyIncome;
+            if (cumulative >= 0) return i;
+          }
+          return "Not reached within projection period";
+        };
+
+        // Chart.js integration:
+        // Plot cumulative net income over the projection months.
+        // For expenses, display total expenses per month:
+        // Month 1: expense = (setup cost + monthly expense),
+        // Months 2+: expense = monthly expense (non-cumulative).
+        const chartRef = React.useRef(null);
+        const chartInstanceRef = React.useRef(null);
+
+        React.useEffect(() => {
+          if (result) {
+            // Build cumulative net income array:
+            let cumulativeNetIncome = [];
+            let runningTotal = 0;
+            for (let i = 1; i <= projectionMonths; i++) {
+              const monthlyIncome = i === 1
+                ? -(result.totalInvestment + result.monthlyExpenses)
+                : result.monthlyNetProfit;
+              runningTotal += monthlyIncome;
+              cumulativeNetIncome.push(runningTotal);
+            }
+            // Build expense values array (non-cumulative):
+            // Month 1: expense = setup cost + monthly expense, Months 2+: expense = monthly expense.
+            let expenseValues = [];
+            for (let i = 1; i <= projectionMonths; i++) {
+              if (i === 1) {
+                expenseValues.push(result.totalInvestment + result.monthlyExpenses);
+              } else {
+                expenseValues.push(result.monthlyExpenses);
+              }
+            }
+            const labels = [];
+            for (let i = 1; i <= projectionMonths; i++) {
+              labels.push("M" + i);
+            }
+
+            if (chartInstanceRef.current) {
+              chartInstanceRef.current.data.labels = labels;
+              chartInstanceRef.current.data.datasets[0].data = cumulativeNetIncome;
+              chartInstanceRef.current.data.datasets[1].data = expenseValues;
+              chartInstanceRef.current.update();
+            } else {
+              const ctx = chartRef.current.getContext('2d');
+              chartInstanceRef.current = new Chart(ctx, {
+                type: 'line',
+                data: {
+                  labels: labels,
+                  datasets: [
+                    {
+                      label: 'Cumulative Net Income (RM)',
+                      data: cumulativeNetIncome,
+                      // Set segment colors: red for negative, green for positive segments
+                      segment: {
+                        borderColor: ctx => ctx.p0.parsed.y < 0 ? 'red' : 'green'
+                      },
+                      backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                      fill: true,
+                      tension: 0.1,
+                    },
+                    {
+                      label: 'Total Expenses (RM)',
+                      data: expenseValues,
+                      borderColor: 'rgba(255, 99, 132, 1)',
+                      backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                      fill: false,
+                      tension: 0.1,
+                    },
+                  ],
+                },
+                options: {
+                  responsive: true,
+                  scales: {
+                    y: {
+                      beginAtZero: true,
+                    },
+                  },
+                },
+              });
+            }
+          }
+        }, [result, projectionMonths]);
+
+        // Helper function for human-readable formatting
+        const formatNumber = (num) => {
+          return Number(num).toLocaleString('en-US', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          });
+        };
+
+        // Build table rows for projection months.
+        // Table Columns Order:
+        // Month | Setup Cost | Total Revenue | Monthly Operation Expenses | Partner Profit Sharing | Monthly Net Income | Total Net Income
+        const renderTableRows = () => {
+          if (!result) return null;
+          const rows = [];
+          let cumulativeNetIncome = 0;
+          for (let i = 1; i <= projectionMonths; i++) {
+            // Total Revenue accumulates from Month 2 onward
+            const cumulativeRevenue = (i - 1) * result.totalChargingRevenue;
+            // Monthly Operation Expenses: fixed expense per month
+            const monthlyExpense = result.monthlyExpenses;
+            // Monthly Net Income:
+            // Month 1: = 0 revenue - (setup cost + monthly expense)
+            // Months 2+: = monthly net profit (as calculated)
+            const monthlyNetIncome = i === 1 
+              ? -(result.totalInvestment + result.monthlyExpenses)
+              : result.monthlyNetProfit;
+            // Partner Profit Sharing: Month 1 = 0, Months 2+ = partner payment
+            const partnerProfit = i === 1 ? 0 : result.partnerPayment;
+            cumulativeNetIncome += monthlyNetIncome;
+
+            rows.push(
+              <tr key={i}>
+                <td>{i}</td>
+                <td>{i === 1 ? formatNumber(result.totalInvestment) : '-'}</td>
+                <td>{formatNumber(cumulativeRevenue)}</td>
+                <td>{formatNumber(monthlyExpense)}</td>
+                <td>{formatNumber(partnerProfit)}</td>
+                <td>{formatNumber(monthlyNetIncome)}</td>
+                <td>{formatNumber(cumulativeNetIncome)}</td>
+              </tr>
+            );
+          }
+          return rows;
+        };
+
+        return (
+          <div className="card">
+            <div className="card-body">
+              <form onSubmit={handleSubmit}>
+                <div className="form-group">
+                  <label>Cost per Charger (RM):</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={costPerCharger}
+                    onChange={(e) => setCostPerCharger(parseFloat(e.target.value))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Infrastructure Cost (RM):</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={infrastructureCost}
+                    onChange={(e) => setInfrastructureCost(parseFloat(e.target.value))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Charger Power Rating (kW):</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={chargerPowerRating}
+                    onChange={(e) => setChargerPowerRating(parseFloat(e.target.value))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Average Charging Power (%):</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={averageChargingPower}
+                    onChange={(e) => setAverageChargingPower(parseFloat(e.target.value))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Utilization Rate (%):</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={utilizationRate}
+                    onChange={(e) => setUtilizationRate(parseFloat(e.target.value))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Charging Fee (RM/kWh):</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={chargingFee}
+                    onChange={(e) => setChargingFee(parseFloat(e.target.value))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Electricity Cost (RM/kWh):</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={electricityCost}
+                    onChange={(e) => setElectricityCost(parseFloat(e.target.value))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Profit Sharing (% of Gross Profit):</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={profitSharing}
+                    onChange={(e) => setProfitSharing(parseFloat(e.target.value))}
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Projection Months:</label>
+                  <input
+                    type="number"
+                    className="form-control"
+                    value={projectionMonths}
+                    onChange={(e) => setProjectionMonths(parseInt(e.target.value))}
+                  />
+                </div>
+                <button type="submit" className="btn btn-primary">
+                  Calculate ROI
+                </button>
+              </form>
+              {result && (
+                <div className="mt-4">
+                  <h4>Results</h4>
+                  <p>
+                    <strong>Monthly Energy Delivered:</strong>{" "}
+                    {formatNumber(result.energyDelivered)} kWh
+                  </p>
+                  <p>
+                    <strong>Total Charging Revenue (per month):</strong> RM{" "}
+                    {formatNumber(result.totalChargingRevenue)}
+                  </p>
+                  <p>
+                    <strong>Monthly Electricity Cost:</strong> RM{" "}
+                    {formatNumber(result.monthlyElectricityCost)}
+                  </p>
+                  <p>
+                    <strong>Monthly Operation Expense (Electricity, Hosting & Maintenance):</strong> RM{" "}
+                    {formatNumber(result.monthlyExpenses)}
+                  </p>
+                  <p>
+                    <strong>Gross Profit (Before Profit Sharing):</strong> RM{" "}
+                    {formatNumber(result.monthlyGrossProfit)}
+                  </p>
+                  <p>
+                    <strong>Partner Payment (Profit Sharing):</strong> RM{" "}
+                    {formatNumber(result.partnerPayment)}
+                  </p>
+                  <p>
+                    <strong>Monthly Net Profit (After Profit Sharing):</strong> RM{" "}
+                    {formatNumber(result.monthlyNetProfit)}
+                  </p>
+                  <p>
+                    <strong>Monthly ROI:</strong> {formatNumber(result.monthlyROI)}%
+                  </p>
+                  <p>
+                    <strong>Annual ROI:</strong> {formatNumber(result.annualROI)}%
+                  </p>
+                  <p>
+                    <strong>Total Investment (Setup & Purchase Cost):</strong> RM{" "}
+                    {formatNumber(result.totalInvestment)}
+                  </p>
+                  <p>
+                    <strong>Break Even Month:</strong> {getBreakEvenMonth()}
+                  </p>
+                  <canvas ref={chartRef} width="600" height="400"></canvas>
+
+                  <h4 className="mt-4">Projection (over {projectionMonths} months)</h4>
+                  <table className="table table-bordered table-striped">
+                    <thead>
+                      <tr>
+                        <th>Month</th>
+                        <th>Setup Cost (RM)</th>
+                        <th>Total Revenue (RM)</th>
+                        <th>Monthly Operation Expenses (RM)</th>
+                        <th>Partner Profit Sharing (RM)</th>
+                        <th>Monthly Net Income (RM)</th>
+                        <th>Total Net Income (RM)</th>
+                      </tr>
+                    </thead>
+                    <tbody>{renderTableRows()}</tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      ReactDOM.render(<ROICalculator />, document.getElementById('root'));
+    </script>
+  </body>
+</html>
